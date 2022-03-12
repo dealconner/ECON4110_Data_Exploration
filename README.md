@@ -3,7 +3,7 @@ Conner Deal
 
 ## Data
 
-This project utilizes a total of fifteen datasets with information from the college scorecard released in September of 2015 and Google search trends. The purpose of this analysis is to explore the causal effect of the college scorecard on search trends for high-earning colleges (the distinction between high-earning and low-earning colleges will be clarified below). Our central research question asks: Among colleges that predominantly grant bachelor's degrees, did the release of the Scorecard shift student interest to high-earnings colleges relative to low-earnings ones.
+This project utilizes a total of fifteen datasets with information from the college scorecard released in September of 2015 and Google search trends. The purpose of this analysis is to explore the causal effect of the college scorecard on search trends for high-earning colleges (the distinction between high-earning and low-earning colleges will be clarified below). Our central research question asks: **Among colleges that predominantly grant bachelor's degrees, did the release of the Scorecard shift student interest to high-earnings colleges relative to low-earnings ones?**
 
 The data used and manipulated for our research consists of many files included in this Github repository. The following is each file listed with an explanation of its purpose:
 - trends_up_to_...csv: This file contains the Google trends index for an indicated keyword in a given month or week. The keyword reflects the corresponding university in the United States. 
