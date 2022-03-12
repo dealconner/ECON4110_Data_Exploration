@@ -1,4 +1,4 @@
-### ECON4110_Data_Exploration
+# ECON4110_Data_Exploration
 Conner Deal
 
 ## Data
@@ -13,4 +13,6 @@ The data used and manipulated for our research consists of many files included i
 
 ## Data Manipulation
 
+In order to effectively determine the causal effect of the scorecard on Google searches for high-earnings colleges relative to low-earnings colleges, we must first distinguish between what is classified as "high" versus "low". To do this, I refer to data from the Bureau of Labor Statistics that reports the **median weekly earnings for full-time wage and salary workers age 25 and older with at least a bachelor's degree to be $1,193 weekly in 2014, or $62,036 annually**. I opted to use statistics from 2014 primarily because the scorecard was not yet implemented until September of 2015, meaning that the data reported in the scorecard is likely based off the previous fiscal year, thus using 2015 would be slightly inaccurate given that search index scores started in the tail end of 2015. 
 
+With our cutoff established, we can now move on to selecting variables to include in our regression models.
