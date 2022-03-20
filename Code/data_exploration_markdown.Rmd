@@ -1,0 +1,258 @@
+---
+title: "Data Exploration Project"
+author: "Conner Deal"
+date: "3/15/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The College Scorecard is a public-facing website that contains important information about colleges, including how much its graduates earn. Previously, this information was somewhat difficult to obtain, but with its release in September of 2015, we want to explore whether this information's publication had meaningful impact on student searches for specific colleges. The purpose of this analysis seeks to find the causal effect of the Scorecard on searches using indexes from Google search data, and more specifically, evaluate whether the release of the scorecard shifted student interests to high-earning colleges vs. low-earning colleges that predominantly offer bachelor's degrees. 
+
+
+## Libraries
+
+Loading necessary libraries to conduct our analysis.
+
+```{r Libraries}
+
+library(car)
+library(dplyr)
+library(fixest)
+library(jtools)
+library(lubridate)
+library(purrr)
+library(tidyr)
+library(tidyverse)
+library(vtable)
+
+```
+
+## Cleaning the Data
+
+Google trends data sets are separated because the files are too large, thus it breaks the system. However, we can download them individually and combine them into one working data set. This is then combined with data from the College Scorecard and with proper cleaning and filtering, we have a working data set to run some regressions and analysis. 
+
+##### Reading in the Google data and Scorecard Data
+
+```{r Reading the data}
+
+trends_data_raw <- list.files(pattern = "trends_up_to") %>%
+  map_dfr(read_csv)
+
+SC_data <- read.csv("Most+Recent+Cohorts+(Scorecard+Elements).csv")
+SC_dictionary <- read_csv("CollegeScorecardDataDictionary-09-08-2015.csv")
+id_name_link <- read_csv("id_name_link.csv")
+
+```
+
+##### Removing duplicates from id_name_link file
+
+```{r Removing duplicates}
+
+id_name_link <- id_name_link %>%
+  group_by(schname) %>%
+  mutate(N = n()) %>%
+  filter(N == 1)
+
+id_name_link <- id_name_link[1:3]
+
+```
+
+##### Isolating to show school index per month
+
+```{r Index per month}
+
+trends_data_raw <- trends_data_raw %>%
+  mutate(month = str_sub(monthorweek, 1, 7)) %>%
+  select(schname, keyword, index, month) %>%
+  group_by(schname, keyword, month) %>%
+  summarise(monthTotal = sum(index))
+
+```
+
+##### Creating binary variable for Scorecard implementation (before 2015 vs. after 2015)
+
+```{r Binary SC variable for implementation}
+
+trends_data <- trends_data_raw %>%
+  mutate(month = ym(month)) %>%
+  mutate(after_2015 = month > ym('2015-09'))
+
+```
+
+##### Creating dummy varable for Seasonal control (Fall, Winter, Spring, Summer)
+
+```{r Seasonal categorical variable}
+
+trends_data <- trends_data %>%
+  mutate(justmonth = month(month)) %>%
+  mutate(Season = case_when(justmonth %in% c(12,1,2) ~ 'Winter',
+                            justmonth %in% c(3,4,5) ~ 'Spring', 
+                            justmonth %in% c(6,7,8) ~ 'Summer',
+                            justmonth %in% c(9,10,11) ~ 'Fall'))
+
+```
+
+##### Omitting NULL values and standardizing the index (visualization of standardized index included)
+
+```{r Standardizing the index}
+
+trends_data <- trends_data %>% na.omit()
+
+trends_data <- trends_data %>%
+  group_by(schname, keyword) %>%
+  mutate(index_std = (monthTotal - mean(monthTotal))/sd(monthTotal))
+
+index_std_plot <- ggplot(trends_data, aes(x=index_std))+geom_density()
+index_std_plot
+
+```
+
+###### College Scorecard for recent cohorts data is filtered.
+
+Scorecard data set will include only primarily bachelor's degree granting schools. Other NULL values or cells with unavailable data are also filtered out. Variables are characterized accordingly. 
+The variables filtered and included from the Scorecard data are: unitid and opeid (for joining to Google data), STABBR (state), PREDDEG (primarily bachelor's degree schools), LOCALE (size of local area surrounding school; i.e. city, suburban, rural), CONTROL (public vs. private vs. non-profit), HBCU (historically black colleges), MENONLY, WOMENONLY, PBI (predominantly black institute), HSI (hispanic serving institution), and MED_EARNINGS (median earnings of students post grad).
+
+```{r Filtering SC data}
+
+SC_data <- rename(SC_data, unitid = UNITID, 
+                  opeid = OPEID, 
+                  MED_EARNINGS = "md_earn_wne_p10.REPORTED.EARNINGS")
+
+SC_data <- SC_data %>% select(unitid, opeid, STABBR, PREDDEG,
+                              LOCALE, CONTROL, HBCU, MENONLY,
+                              WOMENONLY, PBI, HSI,
+                              MED_EARNINGS)
+
+SC_data <- SC_data %>%
+  filter(PREDDEG == 3)%>%
+  filter(MED_EARNINGS != "PrivacySuppressed" & MED_EARNINGS != "NULL")
+
+SC_data$LOCALE <- as.numeric(SC_data$LOCALE)
+SC_data$HBCU <- as.numeric(SC_data$HBCU)
+SC_data$MENONLY <- as.numeric(SC_data$MENONLY)
+SC_data$WOMENONLY <- as.numeric(SC_data$WOMENONLY)
+SC_data$PBI <- as.numeric(SC_data$PBI)
+SC_data$HSI <- as.numeric(SC_data$HSI)
+SC_data$MED_EARNINGS <- as.numeric(SC_data$MED_EARNINGS)
+
+vtable(SC_data)
+
+
+```
+
+##### Joining the Scorecard and Google data sets
+
+```{r Joining data}
+
+joined_id_trend <- left_join(id_name_link, trends_data, by = 'schname')
+reg_data <- inner_join(SC_data, joined_id_trend, by = c('unitid', 'opeid'))
+
+```
+
+## Data Analysis
+
+Before running regressions, we must first distinguish our cutoff for "High-Earning" vs. "Low-Earning" colleges. To do this, I refer to data from the Bureau of Labor Statistics that reports the median weekly earnings for full-time wage and salary workers age 25 and older with at least a bachelor's degree to be 1,193 weekly in 2014, or $62,036 annually. I opted to use statistics from 2014 primarily because the scorecard was not yet implemented until September of 2015, meaning that the data reported in the scorecard is likely based off the previous fiscal year, thus using 2015 would be slightly inaccurate given that search index scores started in the tail end of 2015. A binary variable is then added to our data set that separates the high-earning (marked by a value of "1") and low-earning schools (marked by a value of "0").
+
+```{r Establishing our cutoff for earnings}
+
+reg_data <- reg_data %>%
+  mutate(HIGH_EARNING = MED_EARNINGS > 62036)
+
+```
+
+##### Regressions
+
+The first model regresses our standardized index values on our post scorecard binary variable and our high earning binary variable, controlling for months. 
+
+```{r Regression 1 controlling for month}
+
+reg1 <- lm(index_std ~ after_2015*HIGH_EARNING + month, data = reg_data)
+
+reg1_graph <- ggplot(reg1, aes(x = month, y = index_std)) + 
+  geom_smooth(se = FALSE, color = 'blue') + 
+  geom_smooth(method = 'lm', se = FALSE, color = 'red') +
+  geom_vline(xintercept = as.Date("2015-09-01"), linetype = "dashed")
+reg1_graph
+
+export_summs(reg1)
+
+```
+
+This first regression model indicates that the release of the scorecard resulted in 0.02 increase in the standardized searches for high-earning colleges compared to low-earning colleges. 
+
+
+The regression models two and three utilize season as a control, being different in the linear model versus fixed effects. Model four uses fixed effects on the month.
+
+```{r Controlling for seasons and using fixed effects}
+
+reg2 <- lm(index_std ~ after_2015*HIGH_EARNING + Season, data = reg_data)
+
+reg3 <- feols(index_std ~ after_2015*HIGH_EARNING | Season, data = reg_data)
+
+reg4 <- feols(index_std ~ after_2015*HIGH_EARNING | month, data = reg_data)
+
+# Regressions side by side
+export_summs(reg1, reg2, reg3, reg4)
+
+```
+
+The second and third regression models indicate a 0.03 increase in the standardized searches for high-earning colleges compared to low-earning colleges, showing significance at the 95% level with our fixed effects model. The r squared value has also improved in models 2 and 3. Model 4 indicated the same effect from the scorecard, but produced a much better r squared value.
+
+```{r}
+
+# Additional regression controls (showed no impact)
+
+reg5 <- lm(index_std ~ after_2015*HIGH_EARNING + HBCU, data = reg_data)
+
+reg6 <- lm(index_std ~ after_2015*HIGH_EARNING + MENONLY, data = reg_data)
+
+reg7 <- lm(index_std ~ after_2015*HIGH_EARNING + LOCALE, data = reg_data)
+
+export_summs(reg5, reg6, reg7)
+
+# Season seems to be the only variable that we should control for to capture the effect.
+
+```
+
+The additional controls added in models 5, 6, and 7, have no strong influence on the model and do not improve it.
+
+##### Linear hypothesis test
+
+```{r Linear hypothesis test}
+
+linearHypothesis(reg1, 'after_2015TRUE + after_2015TRUE:HIGH_EARNINGTRUE = 0')
+
+```
+
+Our p-value is low enough (<0.05) for us to reject the null hypothesis that the effect of the scorecard on high earning is 0. This indicates that there is in fact an effect, but our model is insufficient in truly capturing that effect. 
+
+##### Visualizations
+
+```{r Graphs}
+
+# Consolidation of standardized index scores to be one record per month
+reg_data_monthly <- reg_data %>%
+  group_by(month, HIGH_EARNING) %>% 
+  summarize(index_std = mean(index_std, na.rm = TRUE))
+
+ggplot() + 
+  geom_line(data = reg_data_monthly, aes(x = month, y = index_std, color = HIGH_EARNING)) +
+  scale_x_date(breaks = scales :: breaks_pretty(13)) +
+  geom_vline(xintercept = as.Date("2015-09-01")) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  labs(title = "Google Index Score Averages Per Month", 
+       subtitle = "Distinguished by High Earning vs. Low Earning University", 
+       x = "Date", y = "Mean Standard Deviation of Index Score")
+
+
+```
+
+## Conclusion
+
+Our regression model 3 showed some significance at the 95% level, indicating a 0.03 increase in the standardized searches for high-earning colleges compared to low-earning colleges. Additionally, our linear hypothesis test verifies that the effect is not 0. The graph above visualizes the slight difference in index score for high earning colleges versus low earning colleges after the implementation of the scorecard, but it seems to return to normal shortly after.
